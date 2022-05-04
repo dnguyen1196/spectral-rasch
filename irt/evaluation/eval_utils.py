@@ -1,6 +1,10 @@
 import numpy as np
 from sklearn.metrics import roc_auc_score
 from girth import ability_mle, ability_map, ability_eap
+import time
+from scipy.integrate import quadrature
+from scipy.stats import norm
+from scipy.special import expit
 
 
 INVALID_RESPONSE = -99999
@@ -14,91 +18,40 @@ def graded_to_binary(A, f):
     return A
 
 
-def partition_data(A, p=0.8, large_m=False):
-    m, n = A.shape[0], A.shape[1]
-    A_train = np.copy(A)
+def partition_data(A, p_train=0.8, p_test=0.2, seed=None):
+    n = A.shape[1]
     test_data = []
+    np.random.seed(seed)
     
-    if not large_m:
-        # For each student, removes a portion of the data
-        for j in range(n):
-            responses = A[:, j]
-            responses_idx = np.where(responses != INVALID_RESPONSE)[0]
-            num_response = len(responses_idx)
-            subset_train = np.random.choice(
-                num_response, size=(max(int(p * num_response), 1),), replace=False
-            )
-            subset_test = np.delete(responses_idx, subset_train)
-            
-            A_train[subset_test, j] = INVALID_RESPONSE
-            for i in subset_test:
-                test_data.append(((i, j), responses[i]))
+    perm = np.random.permutation(n)
+    n_train = int(n*p_train)
+    n_test = int(n*p_test)
     
-    else: # If we have more m than n
-        for i in range(m):
-            responses = A[i, :]
-            responses_idx = np.where(responses != INVALID_RESPONSE)[0]
-            num_response = len(responses_idx)
-            subset_train = np.random.choice(
-                num_response, size=(max(int(p * num_response), 1),), replace=False
-            )
-            subset_test = np.delete(responses_idx, subset_train)
-            A_train[i, subset_test] = INVALID_RESPONSE
-            for j in subset_test:
-                test_data.append(((i, j), responses[j]))
+    subset_cols_train = perm[:n_train]
+    subset_cols_test = perm[-n_test:]
+    A_train = A[:, subset_cols_train]
+    
+    # For each student, removes a portion of the data
+    for j in subset_cols_test:
+        responses = A[:, j]
+        responses_idx = np.where(responses != INVALID_RESPONSE)[0]
+        for i in responses_idx:
+            test_data.append(((i, j), responses[i]))
     
     return A_train, test_data
 
 
-def partition_data_sparse(test_student_response, p=0.8, seed=None):
-    # For very large dataset
+def extract_binary_responses(A):
+    binary_responses = []
     
-    return
-
-
-def evaluate_auc(model, A_train, test_data, verbose=False, ignore_nan=True):
-    # Run the model on the training data, 
-    z_est = model(A_train)
-    if verbose:
-        print("z_estimate", z_est)
-        
-    z_est = z_est/ np.sum(z_est)
-    difficulties = np.exp(z_est)
+    # For each student, removes a portion of the data
+    for i in range(len(A)):
+        responses_toi = A[i, :]
+        responses_idx = np.where(responses_toi != INVALID_RESPONSE)[0]
+        for j in responses_idx:
+            binary_responses.append(((i, j), responses_toi[j]))
     
-    # Use Girth's built in functionality to estimate the abilities
-    abilities = ability_mle(A_train, difficulties, 1)
-    if verbose:
-        print("abilities", abilities)
-    # Replace nan by average abilities
-    # if ignore_nan:
-    y_true = []
-    y_score = []
-    
-    for (test_id, student_id), y in test_data:
-        y_true.append(y)
-        y_score.append(1./(1 + np.exp(-(abilities[student_id] - difficulties[test_id]))))
-        
-    y_true = np.array(y_true)
-    y_score = np.array(y_score)
-    
-    non_nanindex = np.where(np.logical_not(np.isnan(y_true)) & np.logical_not(np.isnan(y_score)))[0]
-    y_true = y_true[non_nanindex]
-    y_score = y_score[non_nanindex]
-    
-    if verbose:
-        print("y_score", y_score)
-        print("y_true", y_true)
-        
-    return roc_auc_score(y_true, y_score)
-
-
-def evaluate_model(A, model, p=0.8, n_trials=100, seed=None):
-    np.random.seed(seed)
-    avg_auc = 0.
-    for _ in range(n_trials):
-        A_train, test_data = partition_data(A, p)
-        avg_auc += 1./n_trials * evaluate_auc(model, A_train, test_data)
-    return avg_auc
+    return binary_responses
 
 
 def cramer_rao_lower_bound(beta_tests, theta_students, p):
@@ -115,3 +68,62 @@ def cramer_rao_lower_bound(beta_tests, theta_students, p):
             I_betai += p * np.exp(-(thetal-betai))/(1+np.exp(-(thetal- betai)))**2
         var.append(1./I_betai)
     return np.array(var)
+
+
+def estimate_p_response(beta, sigma=1):
+    func = lambda x: norm.pdf(x, 0, sigma) * expit(x-beta)
+    p = quadrature(func, -3 * sigma, +3 * sigma)[0]
+    return min(p, 1.)
+
+
+def estimate_p_response(betas, sigma=1, n_samples=500000):
+    # How to speed this up?
+    z_sampled = np.random.normal(0, sigma, size=(n_samples,))
+    p_response = []
+    for beta in betas:
+        p_response.append(min(np.mean(expit(z_sampled - beta)), 1))
+    return p_response
+
+
+def quadrature_p_response(betas, sigma=1, mean=0, kappa=4):
+    p_response = np.zeros((len(betas,)))
+    for i, beta in enumerate(betas):
+        func = lambda x: norm.pdf(x, mean, sigma) * expit(x-beta)
+        p = quadrature(func, mean-kappa * sigma, mean+kappa * sigma)[0]
+        p_response[i] = min(p, 1.)
+    return p_response
+
+
+def log_likelihood_heldout(p_response, test_data):
+    # Compute the log likelihood on held out dataset
+    preds = np.array([p_response[i] for (i, _), _ in test_data])
+    y = np.array([response for (_, _), response in test_data])
+    return np.mean(y * np.log(preds) + (1-y) * np.log(preds))
+
+def bayesian_auc(p_response, test_data):
+    # Compute AUC on heldout dataset
+    y_score = [p_response[i]
+        for (i, _), _ in test_data
+    ]
+    y_true = [response for (_, _), response in test_data]
+    return roc_auc_score(y_true, y_score)
+
+def pairwise_disagreement_error(true_rank, estimate):
+    n = len(true_rank)
+    assert(len(estimate) == n)
+    pred_pos = dict([(item, i) for i, item in enumerate(estimate)])
+    error = 0.
+    for i in range(n-1):
+        for j in range(i+1, n):
+            pos_i = pred_pos[true_rank[i]]
+            pos_j = pred_pos[true_rank[j]]
+            
+            if pos_i > pos_j:
+                error += 1  
+    return error/(n*(n-1)/2)
+
+def top_k_accuracy(true_rank, estimate, K):
+    # Assume that the items are sorted from most popular to least popular
+    true_top_k = true_rank[:K]
+    estimate_top_k = estimate[:K]
+    return float(len(np.intersect1d(true_top_k, estimate_top_k)))/K

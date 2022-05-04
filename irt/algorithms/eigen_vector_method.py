@@ -25,28 +25,31 @@ def construct_positive_reciprocal_matrix(A, lambd=0.1):
     return D
 
 
-def choppin_method(A):
+def choppin_method(A, return_beta=True):
     D = construct_positive_reciprocal_matrix(A)
     lnD = np.log(D)
     difficulties = np.mean(lnD, 1)
     # return difficulties
+    if return_beta:
+        return difficulties - np.mean(difficulties)
     z_est = np.exp(difficulties)
     z_est = z_est / np.sum(z_est)
     return z_est
 
 
-def garner_method(A):
+def garner_method(A, return_beta=True):
     D = construct_positive_reciprocal_matrix(A)
     w, vl, vr = eig(D, left=True, right=True)
-    ord = np.argsort(w)
-    # difficulties = vr[:, ord[-1]]
-    difficulties = vr[:, ord[-1]]
+    ord = np.argsort(w)[::-1]
+    difficulties = vr[:, ord[0]]
+    if return_beta:
+        return difficulties - np.mean(difficulties)
+    
     z_est = np.exp(difficulties)
     z_est = z_est / np.sum(z_est)
     return z_est
-    # return difficulties
 
-def saaty_method(A, max_iters=1000, tol=1e-8):
+def saaty_method(A, max_iters=1000, tol=1e-8, return_beta=True):
     D = construct_positive_reciprocal_matrix(A)
     m = D.shape[0]
     z = np.ones((m,))
@@ -56,12 +59,15 @@ def saaty_method(A, max_iters=1000, tol=1e-8):
         if np.sqrt(np.sum(np.square(z_next - z))) < tol:
             break
         z = z_next
+        
+    if return_beta:
+        difficulties = np.log(z)
+        difficulties -= np.mean(difficulties)
+        return difficulties
     
     z = z_next
     z /= np.sum(z)
     return z
-    # difficulties = np.log(z)
-    # difficulties -= np.min(difficulties)
-    # return difficulties
+
 
 

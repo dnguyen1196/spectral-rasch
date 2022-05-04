@@ -1,36 +1,69 @@
 import numpy as np
+from scipy.sparse import csc_matrix
+INVALID_RESPONSE = -99999
 
 
-def construct_markov_chain(performances, weighted_d=False):
+def construct_markov_chain(performances, lambd=1.):
     m = len(performances)
-    M = np.zeros((m, m))
     
-    for i in range(m):
-        for j in range(m):
-            if i != j:
-                res_i = performances[i, :]
-                res_j = performances[j, :]
-                Bij = len(np.where((res_i == 1) & (res_j == 0))[0])
-                M[i, j] = Bij # Number of students who can solve i but not j
-                
-    dmax = np.max([np.sum(M[i, :]) for i in range(m)]) + 1
+    D = np.ma.masked_where(performances == INVALID_RESPONSE, performances)
+    D_compl = 1. - D
+    M = np.ma.dot(D, D_compl.T)
+    
+    A = np.ma.masked_where(performances == INVALID_RESPONSE, np.ones_like(performances))
+    B = np.ma.dot(A, A.T)
+    
+    np.fill_diagonal(M, 0)
+    np.nan_to_num(M, False)
+    M = np.round(M)
+    
+    # Add regularization to the 'missing' entries
+    M = np.where(np.logical_or((M != 0), (M.T != 0)), M+lambd, M)
     d = []
     for i in range(m):
-        if weighted_d:
-            di = np.sum(M[i, :]) + 1
-            d.append(di)
-            M[i, :] /= di
-        else:
-            M[i, :] /= dmax
+        di = max(np.sum(B[i, :]), 1)
+        d.append(di)
+        M[i, :] /= di
         M[i, i] = 1. - np.sum(M[i, :])
-    
-    if len(d) == 0:
-        d = [dmax for _ in range(m)]
+
     d = np.array(d)
     return M, d
     
 
-def spectral_estimate(performances, accelerated=True, max_iters=10000, estimate_test=True, regularization=False):
+def construct_markov_chain_accelerated(performances, lambd=0.1, regularization="uniform"):
+    m = len(performances)
+    
+    D = np.ma.masked_where(performances == INVALID_RESPONSE, performances)
+    D_compl = 1. - D
+    M = np.ma.dot(D, D_compl.T)
+    np.fill_diagonal(M, 0)
+    np.nan_to_num(M, False)
+    M = np.round(M)
+    
+    # Add regularization to the 'missing' entries
+    if regularization == "uniform":
+        M = np.where(np.logical_or((M != 0), (M.T != 0)), M+lambd, M)
+    elif regularization == "minimal":
+        M = np.where(np.logical_and(np.logical_or((M != 0), (M.T != 0)), 
+                                    np.logical_or((M == 0), (M.T == 0))), 
+                     M + lambd, M)
+    elif regularization == "zero":
+        M = np.where(np.logical_and(np.logical_or((M != 0), (M.T != 0)), M == 0), lambd, M)
+    else: # No regularization
+        M = M
+    
+    d = []
+    for i in range(m):
+        di = max(np.sum(M[i, :]), 1)
+        d.append(di)
+        M[i, :] /= max(d[i], 1)
+        M[i, i] = 1. - np.sum(M[i, :])
+
+    d = np.array(d)
+    return M, d
+    
+
+def spectral_estimate(performances, accelerated=True, max_iters=10000, return_beta=True, lambd=1, regularization="uniform"):
     """Estimate the hidden parameters according to the Rasch model, either for the tests' difficulties
     or the students' abilities. Following the convention of Girth https://eribean.github.io/girth/docs/quickstart/quickstart/
     the rows correspond to the problems and the columns correspond to the students.
@@ -46,50 +79,30 @@ def spectral_estimate(performances, accelerated=True, max_iters=10000, estimate_
     :return: _description_
     :rtype: _type_
     """
-    if estimate_test:
-        A = performances
-    else:
-        # Flip 0 and 1 on the performance matrix (A stronger student has more 1's)
-        A = performances.T
-        zeros_ind = np.where(A == 0)[0]
-        ones_ind = np.where(A == 1)[0]
-        A[zeros_ind] = 1
-        A[ones_ind] = 0
+    assert(regularization in ["uniform", "zero", "minimal", "none"])
+    A = performances
     
     if accelerated:
-        M, d = construct_markov_chain(A, weighted_d=True)
+        M, d = construct_markov_chain_accelerated(A, lambd=lambd, regularization=regularization)
     else:
-        M, d = construct_markov_chain(A)
+        M, d = construct_markov_chain(A, lambd=lambd)
+
+    M = csc_matrix(M)
     
     m = len(A)        
     pi = np.ones((m,)).T
     for _ in range(max_iters):
         pi_next = (pi @ M)
         pi_next /= np.sum(pi_next)
-        if np.linalg.norm(pi_next - pi) < 1e-8:
+        if np.linalg.norm(pi_next - pi) < 1e-12:
             pi = pi_next
             break
         pi = pi_next
         
     pi = pi.T/d
-    pi /= np.sum(pi)
-    return pi
-
-
-class SpectralEstimator():
-    def __init__(self, accelerated=True, max_iters=1000):
-        self.accelerated = accelerated
-        self.max_iters = max_iters
+    if return_beta:
+        beta = np.log(pi)
+        beta = beta - np.mean(beta)
+        return beta
     
-    def fit(self, X):
-        # Estimate both set of parameters, shouldn't we estimate test parameters, then use ability estimation method from the
-        # Girth
-        self.z = spectral_estimate(X, self.accelerated, self.max_iters, True)
-        self.w = spectral_estimate(X, self.accelerated, self.max_iters, False)
-        return self.z
-    
-    def predict(self, student_test_pair):
-        pred = []
-        for (l, i) in student_test_pair:
-            pred.append(self.w[l]/(self.w[l] + self.z[i]))
-        return pred
+    return pi/np.sum(pi)

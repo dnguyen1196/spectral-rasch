@@ -154,3 +154,5 @@ cython_debug/
 
 /irt/data/datasets
 output
+/notebooks/pics
+/experiment_results

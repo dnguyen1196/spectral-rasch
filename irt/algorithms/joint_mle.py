@@ -98,12 +98,3 @@ def rasch_jml(dataset, discrimination=1, options=None):
                            discrimination, options['max_iteration'])
 
     return result
-
-
-class JointMLE():
-    def __init__(self):
-        return
-    
-    def fit(self, X):
-        self.w, self.z = rasch_jml(X)
-        return self.w

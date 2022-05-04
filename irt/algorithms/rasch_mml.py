@@ -6,7 +6,8 @@ from girth.utilities import (validate_estimation_options,
     get_true_false_counts, create_beta_LUT, INVALID_RESPONSE)
 from girth.utilities.utils import _get_quadrature_points    
 from girth.unidimensional.dichotomous.partial_integrals import _compute_partial_integral
-
+import warnings
+warnings.filterwarnings("ignore")
 
 __all__ = ["rasch_mml", "onepl_mml"]
 
@@ -31,7 +32,7 @@ def _mml_abstract(difficulty, scalar, discrimination,
     return difficulty   
 
 
-def rasch_mml(dataset, discrimination=1, options=None):
+def rasch_mml(dataset, discrimination=1, options=None, return_beta=True):
     """ Estimates parameters in a Rasch IRT model
     Args:
         dataset: [items x participants] matrix of True/False Values
@@ -44,8 +45,12 @@ def rasch_mml(dataset, discrimination=1, options=None):
         * quadrature_bounds: (float, float)
         * quadrature_n: int
     """
-    return onepl_mml(dataset, alpha=discrimination, options=options)
-
+    beta = onepl_mml(dataset, alpha=discrimination, options=options)
+    if return_beta:
+        beta -= np.mean(beta)
+        return beta
+    z = np.exp(beta)
+    return z/np.sum(z)
 
 def onepl_mml(dataset, alpha=None, options=None):
     """ Estimates parameters in an 1PL IRT Model.
@@ -106,17 +111,4 @@ def onepl_mml(dataset, alpha=None, options=None):
     else:  # Rasch Method
         min_func(alpha)
 
-    z = np.exp(difficulty)
-    z /= np.sum(z)
-    return z
-
-    # return difficulty
-
-
-class MMLEstimator():
-    def __init__(self,):
-        return
-    
-    def fit(self, X):
-        self.z = rasch_mml(X)
-        return self.z
+    return difficulty

@@ -22,3 +22,25 @@ def generate_data(betas, thetas, p, missing_data_value=INVALID_RESPONSE):
                 performances[i, l] = missing_data_value
         
     return performances
+
+
+def generate_data_positive_scores(z, w, p, missing_data_value=INVALID_RESPONSE):
+    # For each student
+    m = len(z)
+    n = len(w)
+    performances = np.zeros((m, n), dtype=np.int)
+    
+    for i in range(m):
+        zi = z[i]
+        for l in range(n):
+            wl = w[l]
+            if np.random.rand() < p:
+                if np.random.rand() < wl/(zi + wl):
+                    # If the students solve the problem
+                    performances[i, l] = 1
+                else:
+                    performances[i, l] = 0
+            else:
+                performances[i, l] = missing_data_value
+        
+    return performances

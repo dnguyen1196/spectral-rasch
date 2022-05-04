@@ -40,7 +40,7 @@ def trim_response_set_and_counts(response_sets, counts):
     return response_sets, counts
 
 
-def rasch_conditional(dataset, discrimination=1, options=None):
+def rasch_conditional(dataset, discrimination=1, options=None, return_beta=True):
     """ Estimates the difficulty parameters in a Rasch IRT model
     Args:
         dataset: [items x participants] matrix of True/False Values
@@ -94,16 +94,12 @@ def rasch_conditional(dataset, discrimination=1, options=None):
             break
 
     difficulty = betas / discrimination
-    z = np.exp(difficulty)
-    z /= np.sum(z)
-    return z
-    # return difficulty
-
-
-class ConditionalMLE():
-    def __init__(self,):
-        return
     
-    def fit(self, X):
-        self.z = rasch_conditional(X)
-        return self.z
+    if return_beta:
+        difficulty -= np.mean(difficulty)
+        return difficulty
+    
+    else:
+        z = np.exp(difficulty)
+        z /= np.sum(z)
+        return z
