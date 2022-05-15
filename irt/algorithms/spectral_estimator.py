@@ -30,14 +30,24 @@ def construct_markov_chain(performances, lambd=1.):
     return M, d
     
 
-def construct_markov_chain_accelerated(performances, lambd=0.1, regularization="uniform"):
-    m = len(performances)
+def construct_markov_chain_accelerated(A, lambd=0.1, regularization="uniform"):
+    m, n = A.shape
+    D = np.ma.masked_equal(A, INVALID_RESPONSE, copy=False)
     
-    D = np.ma.masked_where(performances == INVALID_RESPONSE, performances)
+    # if n > 200000:
+    #     # Manually compute M entry-by-entry
+    #     M = np.zeros((m, m))
+    #     for i in range(m-1):
+    #         for j in range(i+1, m):
+    #             Mij = np.ma.dot(D[i, :], 1- D[j, :])
+    #             Mji = np.ma.dot(D[j, :], 1- D[i, :])
+    #             if M[i, j] != 0 or M[j, i] != 0:
+    #                 M[i, j] = Mij + lambd
+    #                 M[j, i] = Mji + lambd
+    # else:
     D_compl = 1. - D
     M = np.ma.dot(D, D_compl.T)
     np.fill_diagonal(M, 0)
-    np.nan_to_num(M, False)
     M = np.round(M)
     
     # Add regularization to the 'missing' entries
@@ -63,7 +73,7 @@ def construct_markov_chain_accelerated(performances, lambd=0.1, regularization="
     return M, d
     
 
-def spectral_estimate(performances, accelerated=True, max_iters=10000, return_beta=True, lambd=1, regularization="uniform"):
+def spectral_estimate(A, accelerated=True, max_iters=10000, return_beta=True, lambd=1, regularization="uniform"):
     """Estimate the hidden parameters according to the Rasch model, either for the tests' difficulties
     or the students' abilities. Following the convention of Girth https://eribean.github.io/girth/docs/quickstart/quickstart/
     the rows correspond to the problems and the columns correspond to the students.
@@ -79,9 +89,7 @@ def spectral_estimate(performances, accelerated=True, max_iters=10000, return_be
     :return: _description_
     :rtype: _type_
     """
-    assert(regularization in ["uniform", "zero", "minimal", "none"])
-    A = performances
-    
+    assert(regularization in ["uniform", "zero", "minimal", "none"])    
     if accelerated:
         M, d = construct_markov_chain_accelerated(A, lambd=lambd, regularization=regularization)
     else:

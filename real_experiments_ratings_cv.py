@@ -11,6 +11,8 @@ parser.add_argument("--reg", type=str, default="uniform", help="Regularization t
 parser.add_argument("--cmle", action="store_true", default=False, help="Run experiments for cmle")
 parser.add_argument("--jmle", action="store_true", default=False, help="Run experiments for jmle")
 parser.add_argument("--spectral", action="store_true", default=False, help="Run experiments for spectral")
+parser.add_argument("--mmle", action="store_true", default=False, help="Run experiments for mmle")
+
 
 args = parser.parse_args()
 out_folder = args.out_folder
@@ -21,6 +23,7 @@ regularization = args.reg
 include_cmle = args.cmle
 include_jmle = args.jmle
 include_spectral = args.spectral
+include_mmle = args.mmle
 
 import numpy as np
 from irt.evaluation import eval_utils
@@ -47,15 +50,58 @@ true_rank = [item for (item, _, _) in sorted_ratings] # Sort from most popular i
 
 p_test = 1. - p_train
 K_array = [10, 25, 50, 75, 100, 200, 300] if dataset != "jester" else [5, 10, 20, 25, 30]
-# students_vars = [0.5, 1., 1.5, 2., 2.5] 
 
-prior_dist = [(0, 0.5), (0, 1.), (0, 1.5), (-1, 0.5), (-1, 1.), (-1, 1.5), (1, 0.5), (1, 1.), (1, 1.5)]
+# prior_dist = [(0, 0.5), (0, 1.), (0, 1.5), (-1, 0.5), (-1, 1.), (-1, 1.5), (1, 0.5), (1, 1.), (1, 1.5)]
+prior_dist = [(0, 0.5), (0, 1.), (0, 1.5), (-1, 0.5), (-1, 1.), (-1, 1.5), (1, 0.5), (1, 1.), (1, 1.5), (-2, 0.5), (-2, 1), (-2, 1.5), (2, 0.5), (2, 1.), (2, 1.5)]
+
 
 # Partition the data into train and test set using the global seed
 A_train_all, test_data = eval_utils.partition_data(A, p_train=p_train, p_test=p_test, seed=seed)
 binary_responses = eval_utils.extract_binary_responses(A_train_all)
 
 if include_spectral:
+    ################################### Spectral ##############################
+    start = time.time() # Train once
+    est_spectral = spectral_estimate(A_train_all, lambd=1., regularization="uniform")
+    time_spectral = time.time() - start
+    loglik_spectral = []
+    p_estimates_spectral = []
+
+    for mu, sigma in prior_dist:
+        start = time.time()
+        p_estimate_spectral = eval_utils.quadrature_p_response(est_spectral, sigma, mu)
+        p_estimates_spectral.append(p_estimate_spectral)
+        loglik_spectral.append(log_likelihood_heldout(p_estimate_spectral, binary_responses))
+
+    # Pick the best variance for highest log likelihood (train data) then evaluate on test data
+    mu_best_spectral, sigma_best_spectral = prior_dist[np.argmax(loglik_spectral)]
+    p_estimate_spectral = p_estimates_spectral[np.argmax(loglik_spectral)]
+    test_loglik_spectral = log_likelihood_heldout(p_estimate_spectral, test_data)
+    test_auc_spectral = bayesian_auc(p_estimate_spectral, test_data)
+    est_rank_spectral = np.argsort(est_spectral)[::-1]
+    top_k_spectral = [top_k_accuracy(true_rank, est_rank_spectral, K) for K in K_array]
+
+    print("Save results for spectral")
+    output_file = os.path.join(out_folder, f"{dataset}_m={A.shape[0]}_{seed}_{p_train}_spectral.th")
+
+    # Save results
+    th.save({
+            "est_spectral" : est_spectral,
+            "sigma_spectral" : sigma_best_spectral,
+            "mu_spectral" : mu_best_spectral,
+            "auc_spectral" : test_auc_spectral,
+            "loglik_spectral" : test_loglik_spectral,
+            "top_k_spectral" : top_k_spectral,
+            "time_spectral" : time_spectral,
+
+            "K_array" : K_array,
+            "seed" : seed,
+            "students_vars" : prior_dist,
+            
+        }, output_file)
+
+
+if include_mmle:
     ################################### MMLE ##############################
     loglik_mmle = []
     estimates_mmle = []
@@ -92,29 +138,8 @@ if include_spectral:
     start = time.time()
     top_k_mmle = [top_k_accuracy(true_rank, est_rank_mmle, K) for K in K_array]
 
-    ################################### Spectral ##############################
-    start = time.time() # Train once
-    est_spectral = spectral_estimate(A_train_all, lambd=1., regularization="uniform")
-    time_spectral = time.time() - start
-    loglik_spectral = []
-    p_estimates_spectral = []
-
-    for mu, sigma in prior_dist:
-        start = time.time()
-        p_estimate_spectral = eval_utils.quadrature_p_response(est_spectral, sigma, mu)
-        p_estimates_spectral.append(p_estimate_spectral)
-        loglik_spectral.append(log_likelihood_heldout(p_estimate_spectral, binary_responses))
-
-    # Pick the best variance for highest log likelihood (train data) then evaluate on test data
-    mu_best_spectral, sigma_best_spectral = prior_dist[np.argmax(loglik_spectral)]
-    p_estimate_spectral = p_estimates_spectral[np.argmax(loglik_spectral)]
-    test_loglik_spectral = log_likelihood_heldout(p_estimate_spectral, test_data)
-    test_auc_spectral = bayesian_auc(p_estimate_spectral, test_data)
-    est_rank_spectral = np.argsort(est_spectral)[::-1]
-    top_k_spectral = [top_k_accuracy(true_rank, est_rank_spectral, K) for K in K_array]
-
-    print("Save results for spectral + MMLE")
-    output_file = os.path.join(out_folder, f"{dataset}_m={A.shape[0]}_{seed}_{p_train}_spectral+MMLE.th")
+    print("Save results for MMLE")
+    output_file = os.path.join(out_folder, f"{dataset}_m={A.shape[0]}_{seed}_{p_train}_MMLE.th")
 
     # Save results
     th.save({
@@ -126,18 +151,9 @@ if include_spectral:
             "top_k_mmle" : top_k_mmle,
             "time_mmle" : time_mmle,
 
-            "est_spectral" : est_spectral,
-            "sigma_spectral" : sigma_best_spectral,
-            "mu_spectral" : mu_best_spectral,
-            "auc_spectral" : test_auc_spectral,
-            "loglik_spectral" : test_loglik_spectral,
-            "top_k_spectral" : top_k_spectral,
-            "time_spectral" : time_spectral,
-
             "K_array" : K_array,
             "seed" : seed,
             "students_vars" : prior_dist,
-            
         }, output_file)
 
 
@@ -167,7 +183,7 @@ if include_jmle:
 
     # Since CMLE might take a long time, save current results first
     output_file = os.path.join(out_folder, f"{dataset}_m={A.shape[0]}_{seed}_{p_train}_JMLE.th")
-
+    print("Save results for JMLE")
     # Save results
     th.save({
             "est_jmle" : est_jmle,
@@ -208,7 +224,8 @@ if include_cmle:
 
     #################################### Save output (ALL methods)
     output_file = os.path.join(out_folder, f"{dataset}_m={A.shape[0]}_{seed}_{p_train}_CMLE.th")
-
+    print("Save results for CMLE")
+    
     # Save results
     th.save({
             "est_cmle" : est_cmle,

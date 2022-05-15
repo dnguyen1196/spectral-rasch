@@ -1,5 +1,10 @@
 import numpy as np
 from scipy.linalg import eig
+INVALID_RESPONSE = -99999
+from scipy.sparse import csc_matrix
+from scipy.optimize import minimize
+from scipy.optimize import LinearConstraint
+
 
 
 def construct_positive_reciprocal_matrix(A, lambd=0.1):
@@ -11,18 +16,47 @@ def construct_positive_reciprocal_matrix(A, lambd=0.1):
     :return: _description_
     :rtype: _type_
     """
-    m, _ = A.shape # By convention, expect A to have (num_items, num_students) shape
+    D = np.ma.masked_where(A == INVALID_RESPONSE, A)
+    D_compl = 1. - D
+    M = np.ma.dot(D, D_compl.T)
+    np.fill_diagonal(M, 0)
+    np.nan_to_num(M, False)
+    M = np.round(M) # Mij = num(Xi = 1, Xj = 0)
+    m = A.shape[0]
     D = np.eye(m)
-    
+
     for i in range(m-1):
         for j in range(i+1, m):
-            res_i = A[i, :]
-            res_j = A[j, :]
-            Bij = max(len(np.where((res_i == 1) & (res_j == 0))[0]), lambd)
-            Bji = max(len(np.where((res_j == 1) & (res_i == 0))[0]), lambd)
-            D[i, j] = Bji/Bij
-            D[j, i] = Bij/Bji
+            Bij = M[i, j]
+            Bji = M[j, i]
+            if Bij * Bji != 0:
+                D[i, j] = Bji/Bij
+                D[j, i] = Bij/Bji
     return D
+
+
+def conditional_pairwise(A, step_size=0.1):
+    m = A.shape[0]
+    D = np.ma.masked_where(A == INVALID_RESPONSE, A)
+    D_compl = 1. - D
+    M = np.ma.dot(D, D_compl.T)
+    np.fill_diagonal(M, 0)
+    np.nan_to_num(M, False)
+    Y = np.round(M) # Yij = num(Xi = 1, Xj = 0)
+
+    def log_lik_pair(betas):
+        exp_beta = np.exp(betas)
+        W = np.outer(exp_beta, np.ones((m,))) / (np.outer(exp_beta, np.ones((m,))) + np.outer(np.ones((m,)), exp_beta))
+        grad = np.zeros((m,))
+        for i in range(m):
+            grad[i] = -np.sum(Y[i, :] * W[i, :]) + np.sum(Y[:, i] * W[:, i])
+        return 1, -step_size * grad
+
+    betas0 = np.zeros((m,))
+    constraint = LinearConstraint(np.ones((1, m)), 0, 0)
+    res = minimize(log_lik_pair, betas0, jac=True, constraints=[constraint])
+    betas = res['x']
+    return betas
 
 
 def choppin_method(A, return_beta=True):
@@ -48,6 +82,7 @@ def garner_method(A, return_beta=True):
     z_est = np.exp(difficulties)
     z_est = z_est / np.sum(z_est)
     return z_est
+
 
 def saaty_method(A, max_iters=1000, tol=1e-8, return_beta=True):
     D = construct_positive_reciprocal_matrix(A)

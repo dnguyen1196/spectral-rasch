@@ -49,6 +49,7 @@ def extract_binary_responses(A):
         responses_toi = A[i, :]
         responses_idx = np.where(responses_toi != INVALID_RESPONSE)[0]
         for j in responses_idx:
+            # ((item, user), response)
             binary_responses.append(((i, j), responses_toi[j]))
     
     return binary_responses
@@ -69,23 +70,7 @@ def cramer_rao_lower_bound(beta_tests, theta_students, p):
         var.append(1./I_betai)
     return np.array(var)
 
-
-def estimate_p_response(beta, sigma=1):
-    func = lambda x: norm.pdf(x, 0, sigma) * expit(x-beta)
-    p = quadrature(func, -3 * sigma, +3 * sigma)[0]
-    return min(p, 1.)
-
-
-def estimate_p_response(betas, sigma=1, n_samples=500000):
-    # How to speed this up?
-    z_sampled = np.random.normal(0, sigma, size=(n_samples,))
-    p_response = []
-    for beta in betas:
-        p_response.append(min(np.mean(expit(z_sampled - beta)), 1))
-    return p_response
-
-
-def quadrature_p_response(betas, sigma=1, mean=0, kappa=4):
+def quadrature_p_response(betas, sigma=1, mean=0, kappa=10):
     p_response = np.zeros((len(betas,)))
     for i, beta in enumerate(betas):
         func = lambda x: norm.pdf(x, mean, sigma) * expit(x-beta)
@@ -93,12 +78,11 @@ def quadrature_p_response(betas, sigma=1, mean=0, kappa=4):
         p_response[i] = min(p, 1.)
     return p_response
 
-
 def log_likelihood_heldout(p_response, test_data):
     # Compute the log likelihood on held out dataset
     preds = np.array([p_response[i] for (i, _), _ in test_data])
     y = np.array([response for (_, _), response in test_data])
-    return np.mean(y * np.log(preds) + (1-y) * np.log(preds))
+    return np.mean(y * np.log(preds) + (1-y) * np.log(1-preds))
 
 def bayesian_auc(p_response, test_data):
     # Compute AUC on heldout dataset

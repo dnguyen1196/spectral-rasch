@@ -9,6 +9,12 @@ MOVIES_RATINGS_CUTOFF_LOW = 10
 MOVIES_RATINGS_CUTOFF = 25
 MOVIES_RATINGS_CUTOFF_HIGH = 50
 
+MOVIES_RATINGS_CUTOFF_ML20M = 50
+USERS_RATINGS_CUTOFF_ML20M = 40
+
+BOOK_GENOME_RATINGS_CUTOFF = 50
+USERS_RATINGS_CUTOFF_GENOME = 25
+
 TOP_K_CUTOFF = 100
 TOP_K_CUTOFF_BOOK = 250
 
@@ -40,7 +46,7 @@ def uci_student():
     A = []
 
     def grade(s):
-        if s == "Vg" or s == "Best":
+        if s == "Best" or s == "Vg":
             return 1
         else:
             return 0
@@ -112,6 +118,68 @@ def algebra_05_06():
         A[problems_idx[problem], students_idx[student]] = response
     
     return A, all_problems
+
+def riiid():
+    path = "datasets/records_qmin=1000_smin=10000.txt"
+    filename = os.path.join(os.path.dirname(os.path.realpath(__file__)), path)
+    f = open(filename, 'r')
+    all_students = set()
+    all_problems = set()
+    f.readline()
+    binary_responses = []
+
+    for line in f:
+        data = line.rstrip().split(',') # Note the seperator
+        student = int(data[0])
+        question = int(data[1])
+        response = int(data[2])
+        all_students.add(student)
+        all_problems.add(question)
+        binary_responses.append([student, question, response])
+            
+    replace_question_id = dict([idx, i] for i, idx in enumerate(all_problems))
+    replace_student_id =  dict([idx, i] for i, idx in enumerate(all_students))
+    
+    n = len(all_students)
+    m = len(all_problems)
+    A = np.ones((m, n), dtype=np.int) * INVALID_RESPONSE
+
+    for (s, q, res) in binary_responses:
+        A[replace_question_id[q], replace_student_id[s]] = res
+    
+    return A
+
+
+def riiid_small():
+    path = "datasets/records_qmin=5000_smin=5000.txt"
+    filename = os.path.join(os.path.dirname(os.path.realpath(__file__)), path)
+    f = open(filename, 'r')
+    all_students = set()
+    all_problems = set()
+    f.readline()
+    binary_responses = []
+
+    for line in f:
+        data = line.rstrip().split(',') # Note the seperator
+        student = int(data[0])
+        question = int(data[1])
+        response = int(data[2])
+        all_students.add(student)
+        all_problems.add(question)
+        binary_responses.append([student, question, response])
+    
+    replace_question_id = dict([idx, i] for i, idx in enumerate(all_problems))
+    replace_student_id =  dict([idx, i] for i, idx in enumerate(all_students))
+    
+    n = len(all_students)
+    m = len(all_problems)
+    A = np.ones((m, n), dtype=np.int) * INVALID_RESPONSE
+
+    for (s, q, res) in binary_responses:
+        A[replace_question_id[q], replace_student_id[s]] = res
+    
+    return A
+
 
 
 ############### RECSYS DATASETS
@@ -372,7 +440,7 @@ def ml_10m(return_ratings=True, cutoff=MOVIES_RATINGS_CUTOFF, top_k_cutoff=TOP_K
     return A
 
 
-def ml_20m(return_ratings=True, cutoff=MOVIES_RATINGS_CUTOFF_HIGH, top_k_cutoff=TOP_K_CUTOFF):
+def ml_20m(return_ratings=True, cutoff=MOVIES_RATINGS_CUTOFF_ML20M, top_k_cutoff=TOP_K_CUTOFF, user_rating_cutoff=USERS_RATINGS_CUTOFF_ML20M):
     path = "datasets/ml-20m-ratings.csv"
     filename = os.path.join(os.path.dirname(os.path.realpath(__file__)), path)
     f = open(filename, 'r')
@@ -403,18 +471,25 @@ def ml_20m(return_ratings=True, cutoff=MOVIES_RATINGS_CUTOFF_HIGH, top_k_cutoff=
         if num_ratings < cutoff:
             ratings_by_movies.pop(movie_id, None)
             movie_id_set.remove(movie_id)
+
+    # Remove users with a small number of ratings (noisy)
+    relevant_users = set()
+    for user_id in data_by_user.keys():
+        if len(data_by_user[user_id]) >= user_rating_cutoff:
+            relevant_users.add(user_id)
     
     replace_movie_id = dict([idx, i] for i, idx in enumerate(movie_id_set))
     avg_ratings = dict([(user_id, np.mean(data_by_user[user_id])) for user_id in data_by_user.keys()])
     binary_response = []
     for  user_id, movie_id, rating in ratings:
-        if movie_id in movie_id_set:
+        if movie_id in movie_id_set and user_id in relevant_users:
             binary_response.append(
                 (user_id, replace_movie_id[movie_id], APPROVAL) if rating > avg_ratings[user_id] else (user_id, replace_movie_id[movie_id], DISAPPROVAL) # Note the flipping of 0 and 1 for the response
             )
-    
-    new_user_id = dict([(user_id, i) for i, user_id in enumerate(data_by_user.keys())])
-    n = len(new_user_id)
+
+    updated_user = set([user for user, _, _ in binary_response])
+    new_user_id = dict([(user_id, i) for i, user_id in enumerate(updated_user)])
+    n = len(updated_user)
     m = len(movie_id_set)
     A = np.ones((m, n), dtype=np.int) * INVALID_RESPONSE
     for user_id, movie_id, res in binary_response:
@@ -457,7 +532,7 @@ def jester(return_ratings=True, cutoff=MOVIES_RATINGS_CUTOFF_LOW):
     return B[:, include_idx].T
 
 
-def book_genome(return_ratings=True, cutoff=200, top_k_cutoff=TOP_K_CUTOFF_BOOK):
+def book_genome(return_ratings=True, cutoff=BOOK_GENOME_RATINGS_CUTOFF, top_k_cutoff=TOP_K_CUTOFF_BOOK, user_rating_cutoff=USERS_RATINGS_CUTOFF_GENOME):
     # {"item_id": 41335427, "user_id": 0, "rating": 5}
     path = "datasets/book-genome-ratings.json"
     filename = os.path.join(os.path.dirname(os.path.realpath(__file__)), path)
@@ -489,17 +564,24 @@ def book_genome(return_ratings=True, cutoff=200, top_k_cutoff=TOP_K_CUTOFF_BOOK)
             ratings_by_movies.pop(movie_id, None)
             movie_id_set.remove(movie_id)
     
+    # Remove users with a small number of ratings (noisy)
+    relevant_users = set()
+    for user_id in data_by_user.keys():
+        if len(data_by_user[user_id]) >= user_rating_cutoff:
+            relevant_users.add(user_id)
+    
     replace_movie_id = dict([idx, i] for i, idx in enumerate(movie_id_set))
     avg_ratings = dict([(user_id, np.mean(data_by_user[user_id])) for user_id in data_by_user.keys()])
     binary_response = []
     for  user_id, movie_id, rating in ratings:
-        if movie_id in movie_id_set:
+        if movie_id in movie_id_set and user_id in relevant_users:
             binary_response.append(
-                (user_id, replace_movie_id[movie_id], APPROVAL) if rating > avg_ratings[user_id] else (user_id, replace_movie_id[movie_id], DISAPPROVAL)
+                (user_id, replace_movie_id[movie_id], APPROVAL) if rating > avg_ratings[user_id] else (user_id, replace_movie_id[movie_id], DISAPPROVAL) # Note the flipping of 0 and 1 for the response
             )
-    
-    new_user_id = dict([(user_id, i) for i, user_id in enumerate(data_by_user.keys())])
-    n = len(new_user_id)
+
+    updated_user = set([user for user, _, _ in binary_response])
+    new_user_id = dict([(user_id, i) for i, user_id in enumerate(updated_user)])
+    n = len(updated_user)
     m = len(movie_id_set)
     A = np.ones((m, n), dtype=np.int) * INVALID_RESPONSE
     for user_id, movie_id, res in binary_response:
@@ -561,8 +643,9 @@ def bx_book(return_ratings=True, cutoff=MOVIES_RATINGS_CUTOFF_HIGH, top_k_cutoff
                 (user_id, replace_movie_id[movie_id], APPROVAL) if rating > avg_ratings[user_id] else (user_id, replace_movie_id[movie_id], DISAPPROVAL)
             )
     
-    new_user_id = dict([(user_id, i) for i, user_id in enumerate(data_by_user.keys())])
-    n = len(new_user_id)
+    updated_user = set([user for user, _, _ in binary_response])
+    new_user_id = dict([(user_id, i) for i, user_id in enumerate(updated_user)])
+    n = len(updated_user)
     m = len(movie_id_set)
     A = np.ones((m, n), dtype=np.int) * INVALID_RESPONSE
     for user_id, movie_id, res in binary_response:
