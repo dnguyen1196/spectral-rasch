@@ -156,3 +156,4 @@ cython_debug/
 output
 /notebooks/pics
 /experiment_results
+/notebooks/

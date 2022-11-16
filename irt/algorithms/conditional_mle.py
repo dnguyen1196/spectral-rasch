@@ -1,7 +1,7 @@
 from scipy.optimize import fminbound, minimize, LinearConstraint
 import numpy as np
 
-
+# Adapted from https://github.com/eribean/girth
 
 __all__ = ["rasch_conditional"]
 

@@ -1,2 +1,5 @@
 from irt.algorithms import conditional_mle
 from irt.algorithms import spectral_estimator
+from irt.algorithms import bayesian_1pl
+from .regularized_spectral import RegularizedSpectral, KernelSmoother, NeuralSmoother, MultiLayerNeuralNetwork, LogisticRegression
+from .private_spectral_estimator import spectral_estimate_private

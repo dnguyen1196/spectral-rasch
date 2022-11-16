@@ -12,6 +12,8 @@ parser.add_argument("--cmle", action="store_true", default=False, help="Run expe
 parser.add_argument("--jmle", action="store_true", default=False, help="Run experiments for jmle")
 parser.add_argument("--spectral", action="store_true", default=False, help="Run experiments for spectral")
 parser.add_argument("--mmle", action="store_true", default=False, help="Run experiments for mmle")
+parser.add_argument("--pair", action="store_true", default=False, help="Run experiments for pairwise mle")
+parser.add_argument("--bayesian", action="store_true", default=False, help="Run experiments for Bayesian method")
 
 
 args = parser.parse_args()
@@ -24,13 +26,15 @@ include_cmle = args.cmle
 include_jmle = args.jmle
 include_spectral = args.spectral
 include_mmle = args.mmle
+include_pair = args.pair
+include_bayesian = args.bayesian
 
 import numpy as np
 from irt.evaluation import eval_utils
 from irt.data import data_loader
 import time
 from irt.algorithms.spectral_estimator import spectral_estimate
-from irt.algorithms import conditional_mle
+from irt.algorithms import conditional_mle, pairwise_mle
 from irt.algorithms import rasch_mml
 from irt.algorithms import joint_mle
 from irt.evaluation.eval_utils import log_likelihood_heldout, bayesian_auc, top_k_accuracy
@@ -62,7 +66,7 @@ binary_responses = eval_utils.extract_binary_responses(A_train_all)
 if include_spectral:
     ################################### Spectral ##############################
     start = time.time() # Train once
-    est_spectral = spectral_estimate(A_train_all, lambd=1., regularization="uniform")
+    est_spectral = spectral_estimate(A_train_all, lambd=1.)
     time_spectral = time.time() - start
     loglik_spectral = []
     p_estimates_spectral = []
@@ -236,6 +240,107 @@ if include_cmle:
             "top_k_cmle" : top_k_cmle,
             "time_cmle" : time_cmle,
 
+            "K_array" : K_array,
+            "seed" : seed,
+            "students_vars" : prior_dist,
+            "p_train" : p_train,
+        }, output_file)
+
+
+
+################################### Pairwise MLE #######################
+if include_pair:
+    start = time.time()
+    est_cmle = pairwise_mle.cmle_pairwise(A_train_all)
+    time_cmle = time.time() - start
+    loglik_cmle = []
+    p_estimates_cmle = []
+
+    for mu, sigma in prior_dist:
+        p_estimate_cmle = eval_utils.quadrature_p_response(est_cmle, sigma, mu)
+        p_estimates_cmle.append(p_estimate_cmle)
+        loglik_cmle.append(log_likelihood_heldout(p_estimate_cmle, binary_responses))
+
+    mu_best_cmle, sigma_best_cmle = prior_dist[np.argmax(loglik_cmle)]
+    p_estimate_cmle = p_estimates_cmle[np.argmax(loglik_cmle)]
+    test_loglik_cmle = log_likelihood_heldout(p_estimate_cmle, test_data)
+    test_auc_cmle = bayesian_auc(p_estimate_cmle, test_data)
+    est_rank_cmle = np.argsort(est_cmle)[::-1]
+    top_k_cmle = [top_k_accuracy(true_rank, est_rank_cmle, K) for K in K_array]
+
+
+    #################################### Save output (ALL methods)
+    output_file = os.path.join(out_folder, f"{dataset}_m={A.shape[0]}_{seed}_{p_train}_PAIR.th")
+    print("Save results for Pairwise MLE")
+    
+    # Save results
+    th.save({
+            "est_pair" : est_cmle,
+            "sigma_pair" : sigma_best_cmle,
+            "mu_pair" : mu_best_cmle,
+            "auc_pair" : test_auc_cmle,
+            "loglik_pair" : test_loglik_cmle,
+            "top_k_pair" : top_k_cmle,
+            "time_pair" : time_cmle,
+
+            "K_array" : K_array,
+            "seed" : seed,
+            "students_vars" : prior_dist,
+            "p_train" : p_train,
+        }, output_file)
+
+################################### Bayesian Estimator #######################
+
+if include_bayesian:
+    from irt.algorithms import bayesian_1pl
+    from scipy.special import expit
+    
+    # Convert the data into the format required by Bayesian IRT
+    models = []
+    items = []
+    responses = []
+    for j in range(A.shape[0]):
+        for i in range(A.shape[1]):
+            if A[j, i] != -99999:
+                models.append(i)
+                items.append(j)
+                responses.append(A[j, i])
+    models = th.tensor(models, dtype=th.long)
+    items = th.tensor(items, dtype=th.long)
+    responses = th.tensor(responses, dtype=th.float)
+
+    bayesian_estimator = bayesian_1pl.OneParamLog(priors="hierarchical", num_items=A.shape[0], num_subjects=A.shape[1])
+    start = time.time()
+    bayesian_estimator.fit(models, items, responses)
+    time_bayesian = time.time() - start
+    est_bayesian = bayesian_estimator.export()["diff"]
+    thetas_bayesian = bayesian_estimator.export()["ability"]
+    
+    est_rank_bayesian = np.argsort(est_bayesian)[::-1]
+    top_k_bayesian = [top_k_accuracy(true_rank, est_rank_bayesian, K) for K in K_array]
+    # Approximate the prior over the thetas
+    sigma = np.std(thetas_bayesian)
+    mu = np.mean(thetas_bayesian)
+
+    p_estimate_bayesian = eval_utils.quadrature_p_response(est_bayesian, sigma, mu)
+
+    test_loglik_bayesian = log_likelihood_heldout(p_estimate_bayesian, test_data)
+    test_auc_bayesian = bayesian_auc(p_estimate_bayesian, test_data)
+    
+    #################################### Save output 
+    output_file = os.path.join(out_folder, f"{dataset}_m={A.shape[0]}_{seed}_{p_train}_bayesian.th")
+    print("Save results for Bayesian method")
+    # Save results
+
+    th.save({
+            "est_bayesian" : est_bayesian,
+            "sigma_bayesian" : sigma,
+            "mu_bayesian" : mu,
+            "auc_bayesian" : test_auc_bayesian,
+            "loglik_bayesian" : test_loglik_bayesian,
+            "top_k_bayesian" : top_k_bayesian,
+
+            "time_bayesian" : time_bayesian,
             "K_array" : K_array,
             "seed" : seed,
             "students_vars" : prior_dist,

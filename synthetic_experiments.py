@@ -18,9 +18,10 @@ import numpy as np
 import time
 from irt.data.rasch import generate_data
 from irt.algorithms.spectral_estimator import spectral_estimate
-from irt.algorithms import conditional_mle, eigen_vector_method
+from irt.algorithms import conditional_mle, eigen_vector_method, pairwise_mle
 from irt.algorithms import rasch_mml
 from irt.algorithms import joint_mle
+from irt.algorithms import bayesian_1pl
 
 from scipy.stats import norm
 import os
@@ -38,6 +39,8 @@ errors_jmle_arr = []
 errors_choppin_arr = []
 errors_saaty_arr = []
 errors_pair_arr = []
+errors_pair_bayesian = []
+
 
 time_spectral_arr = []
 time_cmle_arr = []
@@ -46,6 +49,8 @@ time_jmle_arr = []
 time_choppin_arr = []
 time_saaty_arr = []
 time_pair_arr = []
+time_pair_bayesian = []
+
 
 n_array = [50, 100, 500, 1000, 2500, 5000]
 n_trials = 100
@@ -61,6 +66,7 @@ for n in n_array:
     error_choppin = []
     error_saaty = []
     error_pair = []
+    error_bayesian = []
 
     time_spectral = []
     time_cmle = []
@@ -69,6 +75,8 @@ for n in n_array:
     time_choppin = []
     time_saaty = []
     time_pair = []
+    time_bayesian = []
+    
     
     for _ in range(n_trials):
         # Generate data
@@ -94,7 +102,7 @@ for n in n_array:
 
         # Spectral method
         start = time.time()
-        est_ase = spectral_estimate(data, lambd=0.001, regularization="uniform")
+        est_ase = spectral_estimate(data, lambd=1./(m * np.log(m)))
         time_spectral += [(time.time() - start)]
         error_spectral += [ell_2_error(betas, est_ase)]
 
@@ -112,9 +120,35 @@ for n in n_array:
         
         # Pairwise method
         start = time.time()
-        est_pair = eigen_vector_method.conditional_pairwise(data, 0.1)
+        est_pair = pairwise_mle.cmle_pairwise(data)
         time_pair += [(time.time() - start)]
-        error_pair += [ell_2_error(betas, est_pair)]     
+        error_pair += [ell_2_error(betas, est_pair)]
+        
+        # Bayesian
+        models = []
+        items = []
+        responses = []
+        for j in range(m):
+            for i in range(n):
+                if data[j, i] != -99999:
+                    models.append(i)
+                    items.append(j)
+                    responses.append(data[j, i])
+        models = th.tensor(models, dtype=th.long)
+        items = th.tensor(items, dtype=th.long)
+        responses = th.tensor(responses, dtype=th.float)
+
+        bayesian_estimator = bayesian_1pl.OneParamLog(priors="hierarchical", num_items=m, num_subjects=n)
+        start = time.time()
+        try:
+            bayesian_estimator.fit(models, items, responses)
+            time_bayesian += [time.time() - start]
+            est_bayesian = bayesian_estimator.export()["diff"]
+            error_bayesian += [ell_2_error(betas, est_bayesian)]
+        except Exception as e:
+            time_bayesian += [np.nan]
+            error_bayesian += [np.nan]
+        
         
     errors_spectral_arr.append(error_spectral)
     errors_cmle_arr.append(error_cmle)
@@ -123,6 +157,7 @@ for n in n_array:
     errors_choppin_arr.append(error_choppin)
     errors_saaty_arr.append(error_saaty)
     errors_pair_arr.append(error_pair)
+    errors_pair_bayesian.append(error_bayesian)
 
     time_spectral_arr.append(time_spectral)
     time_cmle_arr.append(time_cmle)
@@ -131,7 +166,7 @@ for n in n_array:
     time_choppin_arr.append(time_choppin)
     time_saaty_arr.append(time_saaty)
     time_pair_arr.append(time_pair)
-    
+    time_pair_bayesian.append(time_bayesian)
     
 
 #################################### Save output (ALL methods)
@@ -151,6 +186,7 @@ th.save({
         "errors_choppin" : errors_choppin_arr,
         "errors_saaty" : errors_saaty_arr,
         "errors_pair" : errors_pair_arr,
+        "errors_bayesian" : errors_pair_bayesian,
 
         "time_spectral" : time_spectral_arr,
         "time_mmle" : time_mmle_arr,
@@ -159,5 +195,6 @@ th.save({
         "time_choppin" : time_choppin_arr,
         "time_saaty" : time_saaty_arr,
         "time_pair" : time_pair_arr,
+        "time_bayesian" : time_pair_bayesian,
         
     }, output_file)

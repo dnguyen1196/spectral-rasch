@@ -30,8 +30,10 @@ def construct_positive_reciprocal_matrix(A, lambd=0.1):
             Bij = M[i, j]
             Bji = M[j, i]
             if Bij * Bji != 0:
-                D[i, j] = Bji/Bij
-                D[j, i] = Bij/Bji
+                fij = Bij/(Bij + Bji)
+                fji = Bji/(Bij + Bji)
+                D[i, j] = fji/fij
+                D[j, i] = fij/fji
     return D
 
 
@@ -42,15 +44,29 @@ def conditional_pairwise(A, step_size=0.1):
     M = np.ma.dot(D, D_compl.T)
     np.fill_diagonal(M, 0)
     np.nan_to_num(M, False)
-    Y = np.round(M) # Yij = num(Xi = 1, Xj = 0)
+    M = np.round(M) # Yij = num(Xi = 1, Xj = 0)
+    
+    # Add regularization to the 'missing' entries
+    M = np.where(np.logical_or((M != 0), (M.T != 0)), M+1, M)
+    Y = np.zeros_like(M)
+    
+    for i in range(m-1):
+        for j in range(i+1, m):
+            Bij = M[i, j]
+            Bji = M[j, i]
+            if Bij * Bji != 0:
+                Y[i, j] = Bij/(Bij + Bji)
+                Y[j, i] = Bji/(Bij + Bji)
 
     def log_lik_pair(betas):
         exp_beta = np.exp(betas)
         W = np.outer(exp_beta, np.ones((m,))) / (np.outer(exp_beta, np.ones((m,))) + np.outer(np.ones((m,)), exp_beta))
+        f = 0.
         grad = np.zeros((m,))
         for i in range(m):
             grad[i] = -np.sum(Y[i, :] * W[i, :]) + np.sum(Y[:, i] * W[:, i])
-        return 1, -step_size * grad
+            f += 1./2 * (np.log(np.sum(Y[i, :] * W[i, :])) + np.log(np.sum(Y[:, i] * W[:, i])))
+        return -f, -step_size * grad
 
     betas0 = np.zeros((m,))
     constraint = LinearConstraint(np.ones((1, m)), 0, 0)
