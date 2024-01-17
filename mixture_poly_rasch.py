@@ -15,8 +15,6 @@ parser.add_argument('--seed', type=int, default=119, help='random seed')
 parser.add_argument('--dataset', type=str, help='Name of dataset used', default="hetrec_2k", 
                     choices=['hetrec_2k', 'ml_1m', 'ml_20m', 'ml_10m', "each_movie", 
                              "book_genome", "lsat", "uci_student", "grades_three"])
-parser.add_argument('--llh', type=str, default="point", help="Likelihood method")
-parser.add_argument('--aep', type=str, default="mean", help="Ability estimation method")
 parser.add_argument("--max_iters", type=int, default=30, help='Max number of em iters')
 parser.add_argument('--m_min', type=int, default=100, help="Min number of ratings threshold for movies")
 parser.add_argument('--n_min', type=int, default=100, help="Min number of ratings threshold for users")
@@ -29,8 +27,6 @@ args = parser.parse_args()
 seed = args.seed
 out_folder = args.out_folder
 dataset = args.dataset
-likelihood_method = args.llh
-ability_estimation_method = args.aep
 max_iters = args.max_iters
 m_min = args.m_min
 n_min = args.n_min
@@ -40,8 +36,8 @@ auto_sigma = args.auto_sigma
 # Save output of algorithm
 # Save true parameters value for checking
 # ell2 frobenious norm for now
-filename = os.path.join(out_folder, f'{dataset}_{seed}_mixture_{init}_{likelihood_method}_{ability_estimation_method}_{m_min}_{n_min}_{max_iters}_{auto_sigma}.th')
-err_filename = os.path.join("./logs/", f'{dataset}_{seed}_mixture_{init}_{likelihood_method}_{ability_estimation_method}_{m_min}_{n_min}_{max_iters}_{auto_sigma}_stderr')
+filename = os.path.join(out_folder, f'{dataset}_{seed}_mixture_{init}_{m_min}_{n_min}_{max_iters}_{auto_sigma}.th')
+err_filename = os.path.join("./logs/", f'{dataset}_{seed}_mixture_{init}_{m_min}_{n_min}_{max_iters}_{auto_sigma}_stderr')
 import sys
 sys.stderr = open(err_filename, 'a+')
 
@@ -73,9 +69,9 @@ for C in C_array:
     Z = em.construct_Z_tensor(X, K)
     Z_masked = np.ma.masked_array(Z, mask=(Z==0))
     start = time.time()
-    betas_init, thetas_init, labels = em.initialize(X, Z, Z_masked, C, K, ability_estimate_method=ability_estimation_method)
+    betas_init, thetas_init, labels = em.initialize(X, Z, Z_masked, C, K)
     init_time = time.time() - start
-    q_init = em.E_step(X, Z_masked, betas_init, thetas_init, likelihood_method=likelihood_method)
+    q_init = em.E_step(X, Z_masked, betas_init, thetas_init)
     
     result_dict[f"betas_init_{C}"] = betas_init
     result_dict[f"thetas_init_{C}"] = thetas_init
@@ -86,9 +82,7 @@ for C in C_array:
         betas, thetas, q, iters = em.fit(X, max_iters=max_iters, betas_init=betas_init, 
                                          init=init,
                                          validation_ratings=validation_ratings,
-                                         likelihood_method=likelihood_method,
-                                         auto_sigma=auto_sigma,
-                                         ability_estimate_method=ability_estimation_method)
+                                         auto_sigma=auto_sigma,)
         result_dict[f"time_{C}"] = time.time() - start
         result_dict[f"betas_{C}"] = betas
         result_dict[f"thetas_{C}"] = thetas
